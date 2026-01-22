@@ -3,10 +3,19 @@ package alpaca
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 )
 
+// skipInCI skips tests that require external network access when running in CI
+func skipInCI(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("Skipping test that requires external network access in CI environment")
+	}
+}
+
 func TestGetBars(t *testing.T) {
+	skipInCI(t)
 	client := NewClient()
 
 	resp, err := client.GetBars(context.TODO(), "AAPL", "1Day", 5)
