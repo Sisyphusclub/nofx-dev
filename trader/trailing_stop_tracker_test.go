@@ -1,8 +1,13 @@
+//go:build cgo
+
 package trader
 
 import (
+	"errors"
+	"fmt"
 	"math"
 	"nofx/store"
+	"sync"
 	"testing"
 	"time"
 
@@ -447,5 +452,360 @@ func TestTrailingStopTracker_TriggerMarksConfig(t *testing.T) {
 	assertFloatEqual(t, "triggered price", updated.TriggeredPrice, 9400)
 	if updated.TriggeredAt == nil {
 		t.Error("Expected TriggeredAt to be set")
+	}
+}
+
+func TestTrailingStopTracker_ConcurrentProcessing(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+	tracker := NewTrailingStopTracker(st)
+
+	for i := 0; i < 5; i++ {
+		cfg := &store.TrailingStopConfigModel{
+			TraderID:         fmt.Sprintf("trader-%d", i),
+			Symbol:           "BTCUSDT",
+			PositionSide:     "LONG",
+			StopType:         "stop_loss",
+			TrailingMode:     "percent",
+			TrailingDistance: 2.0,
+			Quantity:         0.1,
+			IsActive:         true,
+			Status:           "active",
+		}
+		if err := st.TrailingStop().CreateTrailingStop(cfg); err != nil {
+			t.Fatalf("CreateTrailingStop failed: %v", err)
+		}
+	}
+
+	done := make(chan bool)
+	for i := 0; i < 5; i++ {
+		go func(traderNum int) {
+			traderID := fmt.Sprintf("trader-%d", traderNum)
+			tracker.RegisterTrader(traderID, nil)
+			time.Sleep(10 * time.Millisecond)
+			tracker.UnregisterTrader(traderID)
+			done <- true
+		}(i)
+	}
+
+	for i := 0; i < 5; i++ {
+		<-done
+	}
+
+	tracker.tradersMu.RLock()
+	count := len(tracker.traders)
+	tracker.tradersMu.RUnlock()
+
+	if count != 0 {
+		t.Errorf("Expected 0 traders after concurrent ops, got %d", count)
+	}
+}
+
+func TestTrailingStopTracker_MultipleConfigsProcessing(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+	tracker := NewTrailingStopTracker(st)
+
+	longCfg := &store.TrailingStopConfigModel{
+		TraderID:         "trader-1",
+		Symbol:           "BTCUSDT",
+		PositionSide:     "LONG",
+		StopType:         "stop_loss",
+		TrailingMode:     "percent",
+		TrailingDistance: 2.0,
+		Quantity:         0.1,
+		IsActive:         true,
+		Status:           "active",
+	}
+	shortCfg := &store.TrailingStopConfigModel{
+		TraderID:         "trader-1",
+		Symbol:           "ETHUSDT",
+		PositionSide:     "SHORT",
+		StopType:         "stop_loss",
+		TrailingMode:     "fixed_points",
+		TrailingDistance: 50.0,
+		Quantity:         1.0,
+		IsActive:         true,
+		Status:           "active",
+	}
+
+	st.TrailingStop().CreateTrailingStop(longCfg)
+	st.TrailingStop().CreateTrailingStop(shortCfg)
+
+	tracker.processConfig(longCfg, 50000)
+	longCfg, _ = st.TrailingStop().GetTrailingStop(longCfg.ID)
+	assertFloatEqual(t, "long highest", longCfg.HighestPrice, 50000)
+	assertFloatEqual(t, "long stop", longCfg.CurrentStopPrice, 49000)
+
+	tracker.processConfig(shortCfg, 2000)
+	shortCfg, _ = st.TrailingStop().GetTrailingStop(shortCfg.ID)
+	assertFloatEqual(t, "short lowest", shortCfg.LowestPrice, 2000)
+	assertFloatEqual(t, "short stop", shortCfg.CurrentStopPrice, 2050)
+}
+
+func TestTrailingStopTracker_CancelConfig(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+
+	cfg := &store.TrailingStopConfigModel{
+		TraderID:         "trader-1",
+		Symbol:           "BTCUSDT",
+		PositionSide:     "LONG",
+		StopType:         "stop_loss",
+		TrailingMode:     "percent",
+		TrailingDistance: 2.0,
+		Quantity:         0.1,
+		IsActive:         true,
+		Status:           "active",
+	}
+	if err := st.TrailingStop().CreateTrailingStop(cfg); err != nil {
+		t.Fatalf("CreateTrailingStop failed: %v", err)
+	}
+
+	if err := st.TrailingStop().CancelTrailingStop(cfg.ID); err != nil {
+		t.Fatalf("CancelTrailingStop failed: %v", err)
+	}
+
+	updated, _ := st.TrailingStop().GetTrailingStop(cfg.ID)
+	if updated.Status != "canceled" || updated.IsActive {
+		t.Errorf("Expected canceled config, got status=%s is_active=%v", updated.Status, updated.IsActive)
+	}
+}
+
+func TestTrailingStopTracker_GetActiveByTrader(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+
+	for i := 0; i < 3; i++ {
+		cfg := &store.TrailingStopConfigModel{
+			TraderID:         "trader-1",
+			Symbol:           fmt.Sprintf("SYM%dUSDT", i),
+			PositionSide:     "LONG",
+			StopType:         "stop_loss",
+			TrailingMode:     "percent",
+			TrailingDistance: 2.0,
+			Quantity:         0.1,
+			IsActive:         true,
+			Status:           "active",
+		}
+		st.TrailingStop().CreateTrailingStop(cfg)
+	}
+
+	canceledCfg := &store.TrailingStopConfigModel{
+		TraderID:         "trader-1",
+		Symbol:           "CANCELUSDT",
+		PositionSide:     "LONG",
+		StopType:         "stop_loss",
+		TrailingMode:     "percent",
+		TrailingDistance: 2.0,
+		Quantity:         0.1,
+		IsActive:         false,
+		Status:           "canceled",
+	}
+	st.TrailingStop().CreateTrailingStop(canceledCfg)
+
+	active, err := st.TrailingStop().GetActiveTrailingStops("trader-1")
+	if err != nil {
+		t.Fatalf("GetActiveTrailingStops failed: %v", err)
+	}
+	if len(active) != 3 {
+		t.Errorf("Expected 3 active configs, got %d", len(active))
+	}
+}
+
+func TestTrailingStopTracker_TakeProfitMovesBothDirections(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+	tracker := NewTrailingStopTracker(st)
+
+	cfg := &store.TrailingStopConfigModel{
+		TraderID:         "trader-1",
+		Symbol:           "BTCUSDT",
+		PositionSide:     "LONG",
+		StopType:         "take_profit",
+		TrailingMode:     "fixed_points",
+		TrailingDistance: 500.0,
+		Quantity:         0.1,
+		IsActive:         true,
+		Status:           "active",
+	}
+	st.TrailingStop().CreateTrailingStop(cfg)
+
+	tracker.processConfig(cfg, 50000)
+	cfg, _ = st.TrailingStop().GetTrailingStop(cfg.ID)
+	assertFloatEqual(t, "stop after 50000", cfg.CurrentStopPrice, 49500)
+
+	tracker.processConfig(cfg, 51000)
+	cfg, _ = st.TrailingStop().GetTrailingStop(cfg.ID)
+	assertFloatEqual(t, "stop after 51000", cfg.CurrentStopPrice, 50500)
+
+	tracker.processConfig(cfg, 50500)
+	cfg, _ = st.TrailingStop().GetTrailingStop(cfg.ID)
+	assertFloatEqual(t, "stop after pullback", cfg.CurrentStopPrice, 50000)
+}
+
+func TestTrailingStopTracker_ConcurrentRegisterUnregister(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+	tracker := NewTrailingStopTracker(st)
+
+	const workers = 20
+	const loops = 100
+
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		traderID := fmt.Sprintf("trader-%d", i)
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			for j := 0; j < loops; j++ {
+				tracker.RegisterTrader(id, nil)
+				tracker.UnregisterTrader(id)
+			}
+		}(traderID)
+	}
+	wg.Wait()
+
+	for i := 0; i < workers; i++ {
+		tracker.UnregisterTrader(fmt.Sprintf("trader-%d", i))
+	}
+
+	tracker.tradersMu.RLock()
+	count := len(tracker.traders)
+	tracker.tradersMu.RUnlock()
+
+	if count != 0 {
+		t.Errorf("Expected 0 registered traders, got %d", count)
+	}
+}
+
+func TestTrailingStopTracker_ProcessMultipleConfigs(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+	tracker := NewTrailingStopTracker(st)
+
+	testCases := []struct {
+		name     string
+		cfg      store.TrailingStopConfigModel
+		price    float64
+		wantStop float64
+		wantHigh float64
+		wantLow  float64
+	}{
+		{
+			name: "LONG percent trailing",
+			cfg: store.TrailingStopConfigModel{
+				TraderID:         "trader-1",
+				Symbol:           "BTCUSDT",
+				PositionSide:     "LONG",
+				StopType:         "stop_loss",
+				TrailingMode:     "percent",
+				TrailingDistance: 2.0,
+				Quantity:         0.1,
+				IsActive:         true,
+				Status:           "active",
+			},
+			price:    50000,
+			wantStop: 49000,
+			wantHigh: 50000,
+			wantLow:  0,
+		},
+		{
+			name: "SHORT fixed points trailing",
+			cfg: store.TrailingStopConfigModel{
+				TraderID:         "trader-2",
+				Symbol:           "ETHUSDT",
+				PositionSide:     "SHORT",
+				StopType:         "take_profit",
+				TrailingMode:     "fixed_points",
+				TrailingDistance: 100.0,
+				Quantity:         1.0,
+				IsActive:         true,
+				Status:           "active",
+			},
+			price:    2000,
+			wantStop: 2100,
+			wantHigh: 0,
+			wantLow:  2000,
+		},
+		{
+			name: "LONG fixed points take profit",
+			cfg: store.TrailingStopConfigModel{
+				TraderID:         "trader-3",
+				Symbol:           "XRPUSDT",
+				PositionSide:     "LONG",
+				StopType:         "take_profit",
+				TrailingMode:     "fixed_points",
+				TrailingDistance: 0.1,
+				Quantity:         100,
+				IsActive:         true,
+				Status:           "active",
+			},
+			price:    1.5,
+			wantStop: 1.4,
+			wantHigh: 1.5,
+			wantLow:  0,
+		},
+	}
+
+	configs := make([]*store.TrailingStopConfigModel, 0, len(testCases))
+	for _, tc := range testCases {
+		cfg := tc.cfg
+		if err := st.TrailingStop().CreateTrailingStop(&cfg); err != nil {
+			t.Fatalf("CreateTrailingStop failed: %v", err)
+		}
+		configs = append(configs, &cfg)
+	}
+
+	for i, tc := range testCases {
+		tracker.processConfig(configs[i], tc.price)
+
+		updated, err := st.TrailingStop().GetTrailingStop(configs[i].ID)
+		if err != nil {
+			t.Fatalf("GetTrailingStop failed: %v", err)
+		}
+		assertFloatEqual(t, "current stop", updated.CurrentStopPrice, tc.wantStop)
+		assertFloatEqual(t, "highest price", updated.HighestPrice, tc.wantHigh)
+		assertFloatEqual(t, "lowest price", updated.LowestPrice, tc.wantLow)
+	}
+}
+
+func TestTrailingStopTracker_ErrorRecoveryOnCloseFailure(t *testing.T) {
+	st := setupTrailingStopTestStore(t)
+	tracker := NewTrailingStopTracker(st)
+
+	mock := &mockTrader{
+		closeLongErr: errors.New("close failed"),
+	}
+	tracker.RegisterTrader("trader-1", &AutoTrader{trader: mock})
+
+	cfg := &store.TrailingStopConfigModel{
+		TraderID:         "trader-1",
+		Symbol:           "BTCUSDT",
+		PositionSide:     "LONG",
+		StopType:         "stop_loss",
+		TrailingMode:     "fixed_points",
+		TrailingDistance: 1.0,
+		Quantity:         0.1,
+		CurrentStopPrice: 99.0,
+		HighestPrice:     100.0,
+		IsActive:         true,
+		Status:           "active",
+	}
+
+	if err := st.TrailingStop().CreateTrailingStop(cfg); err != nil {
+		t.Fatalf("CreateTrailingStop failed: %v", err)
+	}
+
+	tracker.processConfig(cfg, 98.0)
+
+	updated, err := st.TrailingStop().GetTrailingStop(cfg.ID)
+	if err != nil {
+		t.Fatalf("GetTrailingStop failed: %v", err)
+	}
+	if updated.Status != "active" || !updated.IsActive {
+		t.Errorf("Expected active config after close error, got status=%s is_active=%v", updated.Status, updated.IsActive)
+	}
+	if updated.TriggeredAt != nil {
+		t.Error("TriggeredAt should not be set on close error")
+	}
+
+	openLong, openShort, closeLong, closeShort := mock.calls()
+	if closeLong != 1 || openLong != 0 || openShort != 0 || closeShort != 0 {
+		t.Errorf("Unexpected call counts: openLong=%d openShort=%d closeLong=%d closeShort=%d",
+			openLong, openShort, closeLong, closeShort)
 	}
 }
