@@ -178,6 +178,14 @@ func TestBybitTrader_SymbolFormat(t *testing.T) {
 func TestBybitTrader_FormatQuantity(t *testing.T) {
 	trader := NewBybitTrader("test", "test")
 
+	// Pre-populate qtyStepCache to avoid calling real Bybit API
+	// This makes the test independent of network/API availability
+	trader.qtyStepCacheMutex.Lock()
+	trader.qtyStepCache["BTCUSDT"] = 0.001  // 3 decimal places
+	trader.qtyStepCache["ETHUSDT"] = 0.001  // 3 decimal places
+	trader.qtyStepCache["SOLUSDT"] = 0.001  // 3 decimal places
+	trader.qtyStepCacheMutex.Unlock()
+
 	tests := []struct {
 		name     string
 		symbol   string
