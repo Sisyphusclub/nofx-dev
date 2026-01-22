@@ -11,6 +11,7 @@ import (
 	"nofx/manager"
 	"nofx/mcp"
 	"nofx/store"
+	"nofx/telegram"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -97,6 +98,10 @@ func main() {
 
 	// Create TraderManager and BacktestManager
 	traderManager := manager.NewTraderManager()
+
+	// Initialize order engines (limit orders and trailing stops)
+	traderManager.InitOrderEngines(st)
+
 	mcpClient := newSharedMCPClient()
 	backtestManager := backtest.NewManager(mcpClient)
 	if err := backtestManager.RestoreRuns(); err != nil {
@@ -107,6 +112,9 @@ func main() {
 	if err := traderManager.LoadTradersFromStore(st); err != nil {
 		logger.Fatalf("❌ Failed to load traders: %v", err)
 	}
+
+	// Start order engines after traders are loaded
+	traderManager.StartOrderEngines()
 
 	// Display loaded trader information
 	traders, err := st.Trader().List("default")
@@ -136,6 +144,14 @@ func main() {
 		}
 	}()
 
+	// Initialize Telegram Bot (if configured)
+	tgConfig, _ := telegram.LoadConfig()
+	if tgConfig != nil && tgConfig.Enabled {
+		if err := telegram.Init(tgConfig, st); err != nil {
+			logger.Warnf("⚠️ Failed to initialize Telegram bot: %v", err)
+		}
+	}
+
 	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -145,6 +161,12 @@ func main() {
 
 	<-quit
 	logger.Info("📴 Shutdown signal received, closing system...")
+
+	// Stop Telegram Bot
+	telegram.Shutdown()
+
+	// Stop order engines
+	traderManager.StopOrderEngines()
 
 	// Stop all traders
 	traderManager.StopAll()

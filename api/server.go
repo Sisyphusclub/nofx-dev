@@ -211,6 +211,24 @@ func (s *Server) setupRoutes() {
 			// Backtest routes
 			backtest := protected.Group("/backtest")
 			s.registerBacktestRoutes(backtest)
+
+			// Telegram notification settings
+			protected.GET("/telegram/settings", s.handleGetAllTelegramSettings)
+			protected.GET("/telegram/settings/:trader_id", s.handleGetTelegramSettings)
+			protected.PUT("/telegram/settings/:trader_id", s.handleUpdateTelegramSettings)
+			protected.POST("/telegram/test", s.handleTestTelegramNotification)
+
+			// Limit orders
+			protected.GET("/limit-orders", s.handleGetLimitOrders)
+			protected.GET("/limit-orders/:id", s.handleGetLimitOrder)
+			protected.POST("/limit-orders", s.handleCreateLimitOrder)
+			protected.DELETE("/limit-orders/:id", s.handleCancelLimitOrder)
+
+			// Trailing stops
+			protected.GET("/trailing-stops", s.handleGetTrailingStops)
+			protected.GET("/trailing-stops/:id", s.handleGetTrailingStop)
+			protected.POST("/trailing-stops", s.handleCreateTrailingStop)
+			protected.DELETE("/trailing-stops/:id", s.handleCancelTrailingStop)
 		}
 	}
 }

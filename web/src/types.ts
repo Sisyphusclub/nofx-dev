@@ -819,3 +819,18 @@ export interface GridRiskInfo {
   breakout_level: string
   breakout_direction: string
 }
+
+// Telegram notification settings
+export interface TelegramSettings {
+  id?: number
+  user_id?: string
+  trader_id: string
+  chat_id: number
+  enabled: boolean
+  notify_open: boolean
+  notify_close: boolean
+  notify_errors: boolean
+  default_trader?: boolean
+  created_at?: string
+  updated_at?: string
+}

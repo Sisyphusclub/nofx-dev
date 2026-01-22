@@ -43,10 +43,12 @@ type CompetitionCache struct {
 
 // TraderManager manages multiple trader instances
 type TraderManager struct {
-	traders          map[string]*trader.AutoTrader // key: trader ID
-	loadErrors       map[string]error              // key: trader ID, stores last load error
-	competitionCache *CompetitionCache
-	mu               sync.RWMutex
+	traders              map[string]*trader.AutoTrader // key: trader ID
+	loadErrors           map[string]error              // key: trader ID, stores last load error
+	competitionCache     *CompetitionCache
+	limitOrderEngine     *trader.LimitOrderEngine
+	trailingStopTracker  *trader.TrailingStopTracker
+	mu                   sync.RWMutex
 }
 
 // NewTraderManager creates a trader manager
@@ -57,6 +59,33 @@ func NewTraderManager() *TraderManager {
 		competitionCache: &CompetitionCache{
 			data: make(map[string]interface{}),
 		},
+	}
+}
+
+// InitOrderEngines initializes limit order engine and trailing stop tracker
+func (tm *TraderManager) InitOrderEngines(st *store.Store) {
+	tm.limitOrderEngine = trader.NewLimitOrderEngine(st)
+	tm.trailingStopTracker = trader.NewTrailingStopTracker(st)
+	logger.Info("[TraderManager] Order engines initialized")
+}
+
+// StartOrderEngines starts limit order and trailing stop monitoring
+func (tm *TraderManager) StartOrderEngines() {
+	if tm.limitOrderEngine != nil {
+		tm.limitOrderEngine.Start()
+	}
+	if tm.trailingStopTracker != nil {
+		tm.trailingStopTracker.Start()
+	}
+}
+
+// StopOrderEngines stops limit order and trailing stop monitoring
+func (tm *TraderManager) StopOrderEngines() {
+	if tm.limitOrderEngine != nil {
+		tm.limitOrderEngine.Stop()
+	}
+	if tm.trailingStopTracker != nil {
+		tm.trailingStopTracker.Stop()
 	}
 }
 
@@ -422,6 +451,15 @@ func (tm *TraderManager) RemoveTrader(traderID string) {
 			logger.Infof("⏹ Stopping trader %s before removing from memory...", traderID)
 			t.Stop()
 		}
+
+		// Unregister from order engines
+		if tm.limitOrderEngine != nil {
+			tm.limitOrderEngine.UnregisterTrader(traderID)
+		}
+		if tm.trailingStopTracker != nil {
+			tm.trailingStopTracker.UnregisterTrader(traderID)
+		}
+
 		delete(tm.traders, traderID)
 		logger.Infof("✓ Trader %s removed from memory", traderID)
 	}
@@ -734,6 +772,15 @@ func (tm *TraderManager) addTraderFromStore(traderCfg *store.Trader, aiModelCfg 
 	}
 
 	tm.traders[traderCfg.ID] = at
+
+	// Register trader with order engines
+	if tm.limitOrderEngine != nil {
+		tm.limitOrderEngine.RegisterTrader(traderCfg.ID, at)
+	}
+	if tm.trailingStopTracker != nil {
+		tm.trailingStopTracker.RegisterTrader(traderCfg.ID, at)
+	}
+
 	logger.Infof("✓ Trader '%s' (%s + %s/%s) loaded to memory", traderCfg.Name, aiModelCfg.Provider, exchangeCfg.ExchangeType, exchangeCfg.AccountName)
 
 	// Auto-start if trader was running before shutdown

@@ -30,6 +30,7 @@ import type {
   DebateVote,
   DebatePersonalityInfo,
   PositionHistoryResponse,
+  TelegramSettings,
 } from '../types'
 import { CryptoService } from './crypto'
 import { httpClient } from './httpClient'
@@ -783,6 +784,34 @@ export const api = {
       `${API_BASE}/positions/history?trader_id=${traderId}&limit=${limit}`
     )
     if (!result.success) throw new Error('获取历史仓位失败')
+    return result.data!
+  },
+
+  // Telegram Settings API
+  async getTelegramSettings(traderId: string): Promise<TelegramSettings> {
+    const result = await httpClient.get<TelegramSettings>(`${API_BASE}/telegram/settings/${traderId}`)
+    if (!result.success) throw new Error('获取Telegram设置失败')
+    return result.data!
+  },
+
+  async getAllTelegramSettings(): Promise<TelegramSettings[]> {
+    const result = await httpClient.get<TelegramSettings[]>(`${API_BASE}/telegram/settings`)
+    if (!result.success) throw new Error('获取Telegram设置列表失败')
+    return result.data!
+  },
+
+  async updateTelegramSettings(traderId: string, settings: Partial<TelegramSettings>): Promise<TelegramSettings> {
+    const result = await httpClient.put<TelegramSettings>(`${API_BASE}/telegram/settings/${traderId}`, settings)
+    if (!result.success) throw new Error('更新Telegram设置失败')
+    return result.data!
+  },
+
+  async testTelegramNotification(traderId: string, message?: string): Promise<{ success: boolean }> {
+    const result = await httpClient.post<{ success: boolean }>(`${API_BASE}/telegram/test`, {
+      trader_id: traderId,
+      message,
+    })
+    if (!result.success) throw new Error('发送测试通知失败')
     return result.data!
   },
 }

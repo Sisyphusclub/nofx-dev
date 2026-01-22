@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"nofx/hook"
 	"nofx/kernel"
 	"nofx/experience"
 	"nofx/logger"
@@ -2160,6 +2161,39 @@ func (at *AutoTrader) recordOrderFill(orderRecordID int64, exchangeOrderID, symb
 	} else {
 		logger.Infof("  📋 Fill recorded: %.4f @ %.6f, fee: %.4f", quantity, price, fee)
 	}
+
+	// Trigger trade event hook for notifications (async)
+	go func() {
+		var positionSide string
+		switch action {
+		case "open_long", "close_long":
+			positionSide = "LONG"
+		case "open_short", "close_short":
+			positionSide = "SHORT"
+		}
+
+		event := &hook.TradeEvent{
+			TraderID:    at.id,
+			TraderName:  at.config.Name,
+			UserID:      at.userID,
+			Exchange:    at.exchange,
+			ExchangeID:  at.exchangeID,
+			Symbol:      symbol,
+			Action:      action,
+			Side:        positionSide,
+			Quantity:    quantity,
+			Price:       price,
+			EntryPrice:  fill.RealizedPnL, // For close orders, we pass RealizedPnL here as entry is from position
+			RealizedPnL: fill.RealizedPnL,
+			Fee:         fee,
+			Leverage:    0, // Leverage is determined per-trade, not stored in config
+			OrderID:     exchangeOrderID,
+			TradeID:     fill.ExchangeTradeID,
+			Timestamp:   time.Now(),
+			Source:      "auto",
+		}
+		hook.HookExec[hook.TradeEventResult](hook.TRADE_EXECUTED, event)
+	}()
 }
 
 // ============================================================================

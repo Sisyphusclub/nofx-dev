@@ -18,17 +18,20 @@ type Store struct {
 	driver *DBDriver // Database driver for abstraction (legacy)
 
 	// Sub-stores (lazy initialization)
-	user     *UserStore
-	aiModel  *AIModelStore
-	exchange *ExchangeStore
-	trader   *TraderStore
-	decision *DecisionStore
-	backtest *BacktestStore
-	position *PositionStore
-	strategy *StrategyStore
-	equity   *EquityStore
-	order    *OrderStore
-	grid     *GridStore
+	user         *UserStore
+	aiModel      *AIModelStore
+	exchange     *ExchangeStore
+	trader       *TraderStore
+	decision     *DecisionStore
+	backtest     *BacktestStore
+	position     *PositionStore
+	strategy     *StrategyStore
+	equity       *EquityStore
+	order        *OrderStore
+	limitOrder   *LimitOrderStore
+	trailingStop *TrailingStopStore
+	grid         *GridStore
+	telegram     *TelegramStore
 
 	mu sync.RWMutex
 }
@@ -159,6 +162,15 @@ func (s *Store) initTables() error {
 	}
 	if err := s.Grid().InitTables(); err != nil {
 		return fmt.Errorf("failed to initialize grid tables: %w", err)
+	}
+	if err := s.LimitOrder().initTables(); err != nil {
+		return fmt.Errorf("failed to initialize limit order tables: %w", err)
+	}
+	if err := s.TrailingStop().initTables(); err != nil {
+		return fmt.Errorf("failed to initialize trailing stop tables: %w", err)
+	}
+	if err := s.Telegram().initTables(); err != nil {
+		return fmt.Errorf("failed to initialize telegram tables: %w", err)
 	}
 	return nil
 }
@@ -291,6 +303,36 @@ func (s *Store) Grid() *GridStore {
 		s.grid = NewGridStore(s.gdb)
 	}
 	return s.grid
+}
+
+// LimitOrder gets limit order storage
+func (s *Store) LimitOrder() *LimitOrderStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.limitOrder == nil {
+		s.limitOrder = NewLimitOrderStore(s.gdb)
+	}
+	return s.limitOrder
+}
+
+// TrailingStop gets trailing stop storage
+func (s *Store) TrailingStop() *TrailingStopStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.trailingStop == nil {
+		s.trailingStop = NewTrailingStopStore(s.gdb)
+	}
+	return s.trailingStop
+}
+
+// Telegram gets telegram settings storage
+func (s *Store) Telegram() *TelegramStore {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.telegram == nil {
+		s.telegram = NewTelegramStore(s.gdb)
+	}
+	return s.telegram
 }
 
 // Close closes database connection

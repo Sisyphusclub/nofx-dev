@@ -3,8 +3,9 @@ import type { AIModel, Exchange, CreateTraderRequest, Strategy } from '../types'
 import { useLanguage } from '../contexts/LanguageContext'
 import { t } from '../i18n/translations'
 import { toast } from 'sonner'
-import { Pencil, Plus, X as IconX, Sparkles, ExternalLink, UserPlus } from 'lucide-react'
+import { Pencil, Plus, X as IconX, Sparkles, ExternalLink, UserPlus, Bell } from 'lucide-react'
 import { httpClient } from '../lib/httpClient'
+import { TelegramSettingsSection } from './TelegramSettingsSection'
 
 // 提取下划线后面的名称部分
 function getShortName(fullName: string): string {
@@ -541,6 +542,20 @@ export function TraderConfigModal({
               )}
             </div>
           </div>
+
+          {/* Telegram Notification Settings (Edit mode only) */}
+          {isEditMode && traderData?.trader_id && (
+            <div className="bg-[#0B0E11] border border-[#2B3139] rounded-lg p-5">
+              <h3 className="text-lg font-semibold text-[#EAECEF] mb-5 flex items-center gap-2">
+                <span className="text-[#F0B90B]">4</span> Telegram 通知
+                <Bell className="w-4 h-4 text-[#F0B90B]" />
+              </h3>
+              <TelegramSettingsSection
+                traderId={traderData.trader_id}
+                traderName={formData.trader_name}
+              />
+            </div>
+          )}
 
         </div>
 

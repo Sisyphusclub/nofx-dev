@@ -37,4 +37,5 @@ const (
 	NEW_BINANCE_TRADER = "NEW_BINANCE_TRADER" // func (userID string, client *futures.Client) *NewBinanceTraderResult
 	NEW_ASTER_TRADER   = "NEW_ASTER_TRADER"   // func (userID string, client *http.Client) *NewAsterTraderResult
 	SET_HTTP_CLIENT    = "SET_HTTP_CLIENT"    // func (client *http.Client) *SetHttpClientResult
+	TRADE_EXECUTED     = "TRADE_EXECUTED"     // func (event *TradeEvent) *TradeEventResult
 )
